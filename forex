@@ -1,0 +1,121 @@
+# from MetaTrader5 import *
+import MetaTrader5 as mt5
+from datetime import datetime
+import pandas as pd
+mt5.initialize()
+
+# key= 'C@C3XrDv'
+# Name     : Akshat Agrawal
+# Type     : Demo Standard Leads
+serv="GTCGlobalTrade-Server"
+Login=20003495
+key="_wQh1lQe"
+# Investor : U-I8RaFw
+mt5.login(login=Login, password=key, server=serv)
+
+
+import MetaTrader5 as mt5
+import pandas as pd
+import time
+
+# Connect to MetaTrader 5
+if not mt5.initialize():
+    print("Failed to initialize MetaTrader 5")
+    quit()
+
+def get_candles(symbol, timeframe, count):
+    """Fetches recent candle data."""
+    rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, count)
+    df = pd.DataFrame(rates)
+    df['time'] = pd.to_datetime(df['time'], unit='s')
+    return df
+
+def analyze_volume(symbol):
+    """Analyzes trading volume to identify institutional activity."""
+    df = get_candles(symbol, mt5.TIMEFRAME_M15, 50)
+    return df['tick_volume'].mean()
+
+def check_daily_high_low(symbol):
+    """Identifies daily high and low levels."""
+    df = get_candles(symbol, mt5.TIMEFRAME_D1, 1)
+    return df['high'].iloc[0], df['low'].iloc[0]
+
+def analyze_liquidity(symbol):
+    """Assesses liquidity zones for potential price reactions."""
+    df = get_candles(symbol, mt5.TIMEFRAME_M15, 50)
+    return df['tick_volume'].std()
+
+def identify_irl_erl(symbol):
+    """Identifies Internal Range Liquidity and External Range Liquidity zones."""
+    df = get_candles(symbol, mt5.TIMEFRAME_H1, 50)
+    return df['low'].min(), df['high'].max()
+##
+def identify_order_block(df):
+    """Identifies the most recent bullish or bearish engulfing pattern."""
+    for i in range(len(df)-1, 1, -1):
+        prev = df.iloc[i-1]
+        curr = df.iloc[i]
+        
+        # Bullish Engulfing Pattern
+        if curr['close'] > curr['open'] and prev['close'] < prev['open'] and curr['close'] > prev['open'] and curr['open'] < prev['close']:
+            return 'buy', prev['low'], curr['high']
+        
+        # Bearish Engulfing Pattern
+        elif curr['close'] < curr['open'] and prev['close'] > prev['open'] and curr['close'] < prev['open'] and curr['open'] > prev['close']:
+            return 'sell', curr['low'], prev['high']
+    
+    return None, None, None
+
+def place_trade(symbol, direction, entry, stop_loss, take_profit, lot_size=0.1):
+    """Places a market order."""
+    order_type = 'mt5.ORDER_BUY' if direction == 'buy' else 'mt5.ORDER_SELL'
+    
+    request = {
+        "action": mt5.TRADE_ACTION_DEAL,
+        "symbol": symbol,
+        "volume": lot_size,
+        "type": order_type,
+        "price": mt5.symbol_info_tick(symbol).ask if direction == 'buy' else mt5.symbol_info_tick(symbol).bid,
+        "sl": stop_loss,
+        "tp": take_profit,
+        "deviation": 10,
+        "magic": 123456,
+        "comment": "Order Block Entry",
+        "type_time": mt5.ORDER_TIME_GTC,
+        "type_filling": mt5.ORDER_FILLING_IOC,
+    }
+    print(request)
+    # result = mt5.order_send(request)
+    if result.retcode != mt5.TRADE_RETCODE_DONE:
+        print(f"Trade failed: {result.comment}")
+    else:
+        print(f"Trade placed successfully: {direction} at {entry}")
+
+
+symbol = "EURUSD"
+timeframe = mt5.TIMEFRAME_M15  # 15-minute chart
+
+while True:
+    temp = analyze_volume(symbol)
+    print(temp)
+    df = get_candles(symbol, timeframe, 50)
+    direction, order_block_low, order_block_high = identify_order_block(df)
+    
+    if direction:
+        print(f"Identified Order Block - Direction: {direction}, Low: {order_block_low}, High: {order_block_high}")
+        
+        # Wait for retracement
+        tick = mt5.symbol_info_tick(symbol)
+        price = tick.ask if direction == 'buy' else tick.bid
+        
+        if (direction == 'buy' and price <= order_block_high) or (direction == 'sell' and price >= order_block_low):
+            
+            # Define SL and TP
+            stop_loss = order_block_low if direction == 'buy' else order_block_high
+            take_profit = price + (price - stop_loss) * 2 if direction == 'buy' else price - (stop_loss - price) * 2
+            
+            # Place trade
+            place_trade(symbol, direction, price, stop_loss, take_profit)
+            
+    time.sleep(60)  # Run every 1 minute
+
